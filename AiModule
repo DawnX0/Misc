@@ -1,0 +1,383 @@
+local Pathfinding = game:GetService("PathfindingService")
+local Runservice  = game:GetService("RunService") 
+local Collection  = game:GetService("CollectionService")
+local Tween = game:GetService("TweenService")
+local RS = game:GetService("ReplicatedStorage")
+
+local Path = require(RS:WaitForChild("Forbidden"):WaitForChild("AI"))
+
+local Connection = nil
+local TrackedTags = {"player"} -- default tags to track
+local Tagged = {}
+local Targetted: any = {}
+local AdvancedMode = false -- when set to true AI sight changes to raycast detection; higher resource usage (experimental)
+
+export type AI = {
+	Name: string,
+	WalkSpeed: number,
+	Health: number,
+	Model: Model,
+	Race: string,
+	Group: string,
+}
+
+local AiModule = {}
+
+local function AddValues(dictionary1, dictionary2)
+	for key, value in pairs(dictionary2) do
+		dictionary1[key] = value
+	end
+end
+
+local function CreateDetectionBox(Size: Vector3 | nil, Parent: Model, Offset: CFrame | nil, Visualizer: boolean | nil) -- standard offset is (0, 3, 0); Visualizer is standardly off
+	
+	local Box = Instance.new("Part")
+	Box.Color = Color3.new(0.537255, 0.321569, 1)
+	if Visualizer == true then Box.Transparency = .8 else Box.Transparency = 1 end
+	Box.CanCollide = false
+	Box.CanQuery = false
+	Box.CanTouch = false
+	Box.Size = Size or  Vector3.new(18, 7, 18)
+	Box.Massless = true
+	Box.Name = "DetectionBox"
+	
+	local Weld = Instance.new("WeldConstraint")
+	Weld.Part0 = Parent.PrimaryPart
+	Weld.Part1 = Box	
+	Weld.Parent = Box
+	
+	local offset = Offset or CFrame.new(0, 3, 0)
+	
+	Box:PivotTo(Parent.WorldPivot * offset)
+	Box.Parent = Parent
+
+end
+
+local function CreateSight(Size: Vector3 | nil, Parent: Model, Offset: number | nil, Visualizer: boolean | nil) -- standard offset scales with the Z size vector; Visualizer is standardly off
+
+	local Box = Instance.new("Part")
+	Box.Color = Color3.new(0.537255, 0.321569, 1)
+	if Visualizer == true then Box.Transparency = .8 else Box.Transparency = 1 end
+	Box.CanCollide = false
+	Box.CanQuery = false
+	Box.CanTouch = false
+	Box.Size = Size or  Vector3.new(15, 4, 35)
+	Box.Massless = true
+	Box.Name = "SightBox"
+
+	local Weld = Instance.new("WeldConstraint")
+	Weld.Part0 = Parent.PrimaryPart
+	Weld.Part1 = Box	
+	Weld.Parent = Box
+
+	local offset = Offset or Box.Size.Z - (Box.Size.Z / 2) 
+	local head = Parent:FindFirstChild("Head")
+	
+	Box:PivotTo(head.CFrame + head.CFrame.LookVector * offset)
+	Box.Parent = Parent
+
+end
+
+function AiModule.Spawn(ai: AI, cFrame, Parent: Instance, Visualizer: boolean | nil) -- spawn in AI at given CFrame
+	
+	local Model = ai.Model
+	Model.Name  = ai.Name
+	
+	local ModelHumanoid     = Model:FindFirstChild("Humanoid")
+	ModelHumanoid.MaxHealth = ai.Health
+	ModelHumanoid.Health    = ai.Health
+	ModelHumanoid.WalkSpeed = ai.WalkSpeed
+	
+	Collection:AddTag(Model, string.lower(ai.Race))
+	Collection:AddTag(Model, string.lower(ai.Group))
+	
+	if not table.find(TrackedTags, string.lower(ai.Group)) then table.insert(TrackedTags, string.lower(ai.Group)) end
+	if not table.find(Tagged, Model) then table.insert(Tagged, Model) end
+	
+	Model:PivotTo(cFrame * CFrame.Angles(0, math.random(1, 180), 0))
+	Model.Parent = Parent
+	
+	CreateDetectionBox(nil, Model, nil, Visualizer)
+	CreateSight(nil, Model, nil, Visualizer)
+	
+end
+
+-- TO/DO: mass spawn function
+
+function AiModule.TrackTargets(Group: string, TargettedGroups: {}) -- Resets targets that are tracked and sets new targets that are tracked; standard targets is {}
+	
+	local t = { [string.lower(Group)] = {} } -- setup is to rename the standard index "1" to the group name
+	
+	for i, value in TargettedGroups do 
+		
+		if not table.find(TrackedTags, string.lower(value)) then warn(value.." group tag not found..")  -- checks to see if the tag was created
+		else table.insert(t[string.lower(Group)], string.lower(value)) end
+		
+	end
+	
+	AddValues(Targetted, t)
+	
+	print(Targetted)
+	
+end
+
+function AiModule.AddTarget(Group: string, TargettedGroup: string) -- Adds a group
+	
+	if table.find(Targetted[string.lower(Group)], TargettedGroup) then warn(TargettedGroup.. " group already added..") return end
+	table.insert(Targetted[string.lower(Group)], TargettedGroup)
+	
+	print(Targetted)
+	
+end
+
+function AiModule.RemoveTarget(Group: string, TargettedGroup: string) -- Removes a group
+	
+	if not table.find(Targetted[string.lower(Group)], TargettedGroup) then warn(TargettedGroup.." group not found..") return end
+	table.insert(Targetted[string.lower(Group)], TargettedGroup)
+
+	print(Targetted)
+	
+end
+
+function AiModule.Update(Group: string) -- Checks to see if a model was added to the group
+	
+	task.spawn(function()
+
+		for i, model in Collection:GetTagged(string.lower(Group)) do
+
+			if table.find(Tagged, model) then return end
+
+			table.insert(Tagged, model)
+
+		end
+
+	end)
+
+	print(Tagged)
+	
+end
+
+function AiModule.AlterDetectionBox(Group: string, Size: Vector3, Offset: CFrame | nil) -- Sets detection size for all AI in group;
+	
+	local GroupModels = Collection:GetTagged(string.lower(Group))
+
+	for _, Model in GroupModels do
+
+		local DetectionBox = Model:FindFirstChild("DetectionBox")
+		
+		if DetectionBox then
+			
+			DetectionBox.Size = Size or DetectionBox.Size
+			
+		else
+			
+			CreateDetectionBox(Size, Model, Offset)
+			
+		end
+
+	end
+	
+end
+
+function AiModule.AlterSightDetection(Group: string, Size: Vector3, Offset: number | nil) -- Resets size and sets new size determining how far all AI in group can see;
+	
+	local GroupModels = Collection:GetTagged(string.lower(Group))
+	
+	for _, Model in GroupModels do
+		
+		local SightBox = Model:FindFirstChild("SightBox")
+
+		if SightBox then
+
+			SightBox.Size = Size or SightBox.Size
+
+		else
+
+			CreateSight(Size, Model, Offset)
+
+		end
+		
+	end
+	
+end
+
+function AiModule.Start(Mode: boolean | nil) -- Starts detection
+	
+	if Connection ~= nil then print("Already running..") return end
+	
+	Connection = Runservice.Heartbeat:Connect(function()
+
+		if Mode == true then -- Raycast detection; Uses the size and Z length of the sight detection box;
+			
+			for group, values in Targetted do
+				
+				local ModelsInGroup = Collection:GetTagged(group)
+				
+				for i, Model in ModelsInGroup do
+					
+					if Model:GetAttribute("moving") == true then return end
+					
+					local SightBox = Model:FindFirstChild("SightBox")
+					local offset = SightBox.Size.Z - (SightBox.Size.Z / 2) 
+					
+					local DetectionBox = Model:FindFirstChild("DetectionBox")
+					
+					local TargetString = Model:FindFirstChild("Target")
+
+					local ModelContainer = Model.Parent
+					local DistanceFromContainer = (ModelContainer.Position - Model.PrimaryPart.Position).Magnitude
+					
+					if DistanceFromContainer >= 45 then
+						
+						Model:SetAttribute("moving", true)
+						
+						print("resetting")
+						
+						Model.Humanoid:MoveTo(ModelContainer.Position + Vector3.new(math.random(5, 15), 0, math.random(5, 15)))
+						if TargetString ~= nil then Model:FindFirstChild("Target"):Destroy() end
+						
+						Model.Humanoid.MoveToFinished:Connect(function()
+							for _, anim in Model.Humanoid.Animator:GetPlayingAnimationTracks() do
+								anim:Stop()
+							end
+						end)
+						
+						
+						
+						task.wait(2)
+						
+						Model:SetAttribute("moving", nil)
+						
+						return
+							
+					end
+					
+					if TargetString and not Model:GetAttribute("moving") then
+
+						local Target = workspace:FindFirstChild(TargetString.Value, true)
+				
+						local DistanceFromTarget = (Model.PrimaryPart.Position - Target.PrimaryPart.Position).Magnitude
+						
+						if DistanceFromTarget < 40 then
+							
+							Model.Humanoid:MoveTo(Target.PrimaryPart.Position - Vector3.new(0, 3, 0))
+							
+							task.spawn(function()
+																
+								for i, anim in Model.Humanoid.Animator:GetPlayingAnimationTracks() do
+									if anim.Name == "Animation" then return end
+								end
+							
+								Model.Humanoid.Animator:LoadAnimation(Model.WalkAnimation):Play() -- Comment this out for no walk animation
+								
+							end)
+							
+						else
+
+							TargetString:Destroy()
+
+						end
+
+					end
+					
+					local Raycastfilter = RaycastParams.new()
+					Raycastfilter.FilterType = Enum.RaycastFilterType.Exclude
+					Raycastfilter.FilterDescendantsInstances = {ModelsInGroup, workspace.BASE}
+					
+					local Ray = workspace:Blockcast(Model.Head.CFrame * CFrame.new(0, 0, offset), SightBox.Size, Model.Head.CFrame.LookVector * SightBox.Size.Z, Raycastfilter)
+					task.spawn(function()
+						
+						if Ray and Ray.Instance then
+						
+							local TargetFound = Ray.Instance.Parent 
+
+							if not TargetFound:IsA("Model") or TargetFound == Model  then return end
+
+							local CharacterTags = Collection:GetTags(TargetFound)
+
+							for i, Tag in CharacterTags do
+
+								if table.find(Targetted[group], Tag) then -- to/do customizable pathfinding agent
+									
+									if not Model:FindFirstChild("Target") then
+
+										local Target = Instance.new("StringValue")
+										Target.Name = "Target"
+										Target.Value = TargetFound.Name
+
+										Target.Parent = Model
+
+									end
+
+								end
+
+							end
+
+						end
+						
+					end)
+					
+					local Parts = workspace:GetPartsInPart(DetectionBox)
+					task.spawn(function()
+
+						if Parts then
+
+							for i, Part in Parts do
+
+								local TargetFound = Part.Parent 
+
+								if not TargetFound:IsA("Model") or TargetFound == Mode then return end
+
+								local CharacterTags = Collection:GetTags(TargetFound)
+
+								for i, Tag in CharacterTags do
+
+									if table.find(Targetted[group], Tag) then -- to/do customizable pathfinding agent
+
+										if not Model:FindFirstChild("Target") then
+
+											local Target = Instance.new("StringValue")
+											Target.Name = "Target"
+											Target.Value = TargetFound.Name
+
+											Target.Parent = Model
+
+										end
+											
+									end
+
+								end
+
+							end	
+
+						end
+					
+					end)
+					
+				end
+				
+			end
+			
+		else -- TO/DO: Getpartsinpart detection 
+			
+			
+			
+		end
+
+		Runservice.Heartbeat:Wait(.1)
+
+	end)
+	
+end
+
+function AiModule.Stop() -- Stops detection
+	
+	if Connection ~= nil then
+		
+		Connection:Disconnect()
+		
+	end
+	
+end
+
+return AiModule
